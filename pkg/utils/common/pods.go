@@ -21,7 +21,7 @@ import (
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-//DeletePod deletes the specified pod and wait until it got terminated
+// DeletePod deletes the specified pod and wait until it got terminated
 func DeletePod(podName, podLabel, namespace string, timeout, delay int, clients clients.ClientSets) error {
 
 	if err := clients.KubeClient.CoreV1().Pods(namespace).Delete(context.Background(), podName, v1.DeleteOptions{}); err != nil {
@@ -43,7 +43,7 @@ func DeletePod(podName, podLabel, namespace string, timeout, delay int, clients 
 		})
 }
 
-//DeleteAllPod deletes all the pods with matching labels and wait until all the pods got terminated
+// DeleteAllPod deletes all the pods with matching labels and wait until all the pods got terminated
 func DeleteAllPod(podLabel, namespace string, timeout, delay int, clients clients.ClientSets) error {
 
 	if err := clients.KubeClient.CoreV1().Pods(namespace).DeleteCollection(context.Background(), v1.DeleteOptions{}, v1.ListOptions{LabelSelector: podLabel}); err != nil {
@@ -151,7 +151,7 @@ func VerifyExistanceOfPods(namespace, pods string, clients clients.ClientSets) (
 	return true, nil
 }
 
-//GetPodList check for the availibilty of the target pod for the chaos execution
+// GetPodList check for the availibilty of the target pod for the chaos execution
 // if the target pod is not defined it will derive the random target pod list using pod affected percentage
 func GetPodList(targetPods string, podAffPerc int, clients clients.ClientSets, chaosDetails *types.ChaosDetails) (core_v1.PodList, error) {
 	finalPods := core_v1.PodList{}
@@ -200,7 +200,7 @@ func CheckForAvailibiltyOfPod(namespace, name string, clients clients.ClientSets
 	return true, nil
 }
 
-//FilterNonChaosPods remove the chaos pods(operator, runner) for the podList
+// FilterNonChaosPods remove the chaos pods(operator, runner) for the podList
 // it filter when the applabels are not defined and it will select random pods from appns
 func FilterNonChaosPods(clients clients.ClientSets, chaosDetails *types.ChaosDetails) (core_v1.PodList, error) {
 	podList, err := clients.KubeClient.CoreV1().Pods(chaosDetails.AppDetail.Namespace).List(context.Background(), v1.ListOptions{LabelSelector: chaosDetails.AppDetail.Label})
@@ -284,6 +284,8 @@ func SetParentName(parentName string, chaosDetails *types.ChaosDetails) {
 func GetTargetPodsWhenTargetPodsENVNotSet(podAffPerc int, clients clients.ClientSets, nonChaosPods core_v1.PodList, chaosDetails *types.ChaosDetails) (core_v1.PodList, error) {
 	filteredPods := core_v1.PodList{}
 	realPods := core_v1.PodList{}
+	wantedOwnerKind := getOwnerKindFromTargetKind(chaosDetails.AppDetail)
+	log.Infof("AppKind=%s specified, looking for pods with owner reference kind %s", chaosDetails.AppDetail.Kind, wantedOwnerKind)
 	for _, pod := range nonChaosPods.Items {
 		switch chaosDetails.AppDetail.AnnotationCheck {
 		case true:
@@ -295,11 +297,13 @@ func GetTargetPodsWhenTargetPodsENVNotSet(podAffPerc int, clients clients.Client
 			if err != nil {
 				return core_v1.PodList{}, err
 			}
-			if isParentAnnotated {
+			if isParentAnnotated && hasWantedOwnerKind(pod, wantedOwnerKind) {
 				filteredPods.Items = append(filteredPods.Items, pod)
 			}
 		default:
-			filteredPods.Items = append(filteredPods.Items, pod)
+			if hasWantedOwnerKind(pod, wantedOwnerKind) {
+				filteredPods.Items = append(filteredPods.Items, pod)
+			}
 		}
 	}
 
@@ -318,6 +322,37 @@ func GetTargetPodsWhenTargetPodsENVNotSet(podAffPerc int, clients clients.Client
 		index = (index + 1) % len(filteredPods.Items)
 	}
 	return realPods, nil
+}
+
+func hasWantedOwnerKind(pod core_v1.Pod, wantedOwnerKind string) bool {
+	if len(pod.OwnerReferences) > 0 {
+		for _, ownerReference := range pod.OwnerReferences {
+			if ownerReference.Kind == wantedOwnerKind {
+				log.Infof("Pod %s matches owner reference kind %s", pod.Name, wantedOwnerKind)
+				return true
+			}
+		}
+	}
+
+	log.Infof("Pod %s does not match owner reference kind %s", pod.Name, wantedOwnerKind)
+	return false
+}
+
+func getOwnerKindFromTargetKind(target types.AppDetails) string {
+	switch target.Kind {
+	case "deployment":
+		return "ReplicaSet"
+	case "statefulset":
+		return "StatefulSet"
+	case "daemonset":
+		return "DaemonSet"
+	case "deploymentconfig":
+		return "ReplicationController"
+	case "rollout":
+		return "ReplicaSet"
+	default:
+		return ""
+	}
 }
 
 // DeleteHelperPodBasedOnJobCleanupPolicy deletes specific helper pod based on jobCleanupPolicy
@@ -351,8 +386,8 @@ func GetServiceAccount(chaosNamespace, chaosPodName string, clients clients.Clie
 	return pod.Spec.ServiceAccountName, nil
 }
 
-//GetTargetContainer will fetch the container name from application pod
-//This container will be used as target container
+// GetTargetContainer will fetch the container name from application pod
+// This container will be used as target container
 func GetTargetContainer(appNamespace, appName string, clients clients.ClientSets) (string, error) {
 	pod, err := clients.KubeClient.CoreV1().Pods(appNamespace).Get(context.Background(), appName, v1.GetOptions{})
 	if err != nil {
@@ -361,7 +396,7 @@ func GetTargetContainer(appNamespace, appName string, clients clients.ClientSets
 	return pod.Spec.Containers[0].Name, nil
 }
 
-//GetContainerID  derive the container id of the application container
+// GetContainerID  derive the container id of the application container
 func GetContainerID(appNamespace, targetPod, targetContainer string, clients clients.ClientSets) (string, error) {
 
 	pod, err := clients.KubeClient.CoreV1().Pods(appNamespace).Get(context.Background(), targetPod, v1.GetOptions{})
@@ -384,7 +419,7 @@ func GetContainerID(appNamespace, targetPod, targetContainer string, clients cli
 	return containerID, nil
 }
 
-//GetRuntimeBasedContainerID extract out the container id of the target container based on the container runtime
+// GetRuntimeBasedContainerID extract out the container id of the target container based on the container runtime
 func GetRuntimeBasedContainerID(containerRuntime, socketPath, targetPods, appNamespace, targetContainer string, clients clients.ClientSets) (string, error) {
 
 	var containerID string
